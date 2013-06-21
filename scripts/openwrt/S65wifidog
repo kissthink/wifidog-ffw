@@ -1,0 +1,523 @@
+#!/bin/sh
+#
+# Could be better, but it's working as expected
+#
+# 
+#
+# chkconfig: 345 65 35
+#
+# description: Startup/shutdown script for Wifidog captive portal
+# processname: wifidog
+
+# Date    : 2007-04-06
+# Version : 1.1
+if [ "$(nvram get wifidog)" != 0 ]
+then
+
+IPT=/usr/sbin/iptables
+WD_DIR=/usr/bin
+OPTIONS="-c /var/etc/wifidog.conf"
+case $(nvram get wan_proto) in
+	pppoe)
+		ext_int=ppp0
+		;;
+	static)
+		ext_int=$(nvram get wan_ifname)
+		;;
+	dhcp)
+		ext_int=$(nvram get wan_ifname)
+		;;
+	*)
+		ext_int=$(nvram get wan_ifname)
+#		com=#
+		;;	
+esac
+lat=$(echo $(nvram get ff_adm_latlon) | sed -e "s/\(.*\);\(.*\)/\1/")
+long=$(echo $(nvram get ff_adm_latlon) | sed -e "s/\(.*\);\(.*\)/\2/")
+if [ -n "$( pidof tinyproxy )" ]
+then
+proxyport="ProxyPort 8888"
+else
+proxyport="#ProxyPort 8888"
+fi
+gat=$(nvram get wifi_ifname)
+lan_int=$(nvram get lan_ifname)
+
+write_config() {
+cat > /var/etc/wifidog.conf<<EOF
+# $Id: wifidog.conf 935 2006-02-01 03:22:04Z benoitg $
+# WiFiDog Configuration file
+
+# Parameter: GatewayID
+# Default: default
+# Optional but essential for monitoring purposes
+#
+# Set this to the template ID on the auth server
+# this is used to give a customized login page to the clients
+# If none is supplied, the mac address of the GW interface will be used,
+# without the : separators
+
+# GatewayID default
+
+# Parameter: ExternalInterface
+# Default: NONE
+# Optional
+#
+# Set this to the external interface.  Typically vlan1 for OpenWrt, and eth0 or ppp0 otherwise
+
+${com}ExternalInterface $ext_int
+
+# Parameter: GatewayInterface
+# Default: NONE
+# Mandatory
+#
+# Set this to the internal interfaces.    Typically br0 for OpenWrt, and eth1 otherwise
+# Could be a list separed by comma, usefull for Freifunk ex: eth1,br0
+
+GatewayInterface $gat
+
+# GatewayInterface $gat,$lan_int
+
+# Proprietary of the node (enrolled nickname on the auth server)
+# Only used in France Wireless wifidog.ipkg
+# (don't use this parameter otherwise)
+Proprietary $(nvram get ff_adm_nick)
+
+NodeName $(nvram get ff_adm_node)
+
+Network $(nvram get ff_adm_network)
+
+Lat $lat
+Lon $long
+
+$proxyport
+
+# Parameter: GatewayAddress
+# Default: Find it from GatewayInterface
+# Optional
+#
+# Set this to the internal IP address of the gateway
+
+# GatewayAddress 192.168.1.1
+
+# Parameter: AuthServer
+# Default: NONE
+# Mandatory, repeatable
+#
+# This allows you to configure your auth server(s).  Each one will be tried in order, untill one responds.
+# Set this to the hostname or IP of your auth server(s), the path where
+# WiFiDog-auth resides in and the port it listens on.
+#AuthServer {
+#	Hostname      (Mandatory; Default: NONE)
+#	SSLAvailable  (Optional; Default: no; Possible values: yes, no)
+#	SSLPort 443   (Optional; Default: 443)
+#	HTTPPort 80   (Optional; Default: 80)
+#	Path wifidog/ (Optional; Default: /wifidog/ Note:  The path must be both prefixed and suffixed by /.  Use a single / for server root.)
+#}
+
+for i in 1 2 3
+do
+if [ "$(nvram get wifidog_serv$i)" != "" ]
+then
+echo "AuthServer {"
+echo "Hostname $(nvram get wifidog_serv$i)"
+echo "" >> $wifidog
+if [ "$(nvram get wifidog_ssl$i)" = "1" ]
+then                        
+echo "    SSLAvailable yes"
+else                        
+echo "    SSLAvailable no"
+fi                          
+echo "        Path $(nvram get wifidog_path$i)"
+echo "}"
+
+# Parameter: Portal
+# Default: none
+# Optional
+#
+# Set this to a URL for your portal, if you run without an auth server
+# Portal http://www.wireless-fr.org/
+
+# Parameter: Daemon
+# Default: 1
+# Optional
+#
+# Set this to true if you want to run as a daemon
+# Daemon 1
+
+# Parameter: GatewayPort
+# Default: 2060
+# Optional
+#
+# Listen on this port
+# GatewayPort 2060
+
+# Parameter: HTTPDName
+# Default: WiFiDog
+# Optional
+#
+# Define what name the HTTPD server will respond
+# HTTPDName WiFiDog
+
+# Parameter: HTTPDMaxConn
+# Default: 10
+# Optional
+#
+# How many sockets to listen to
+# HTTPDMaxConn 10
+
+# Parameter: CheckInterval
+# Default: 60
+# Optional
+#
+# How many seconds should we wait between timeout checks
+# CheckInterval 600
+
+# Parameter: ClientTimeout
+# Default: 5
+# Optional
+#
+# Set this to the desired of number of CheckInterval of inactivity before a client is logged out
+# The timeout will be INTERVAL * TIMEOUT
+# ClientTimeout 1
+
+# Parameter: TrustedMACList
+# Default: none
+# Optional
+#
+# Liste d'adresse MAC (séparées par une virgule) autorisées à passer
+# à travers le portail captif sans authentification
+#TrustedMACList 00:00:DE:AD:BE:AF,00:00:C0:1D:F0:0D
+
+if [ "$(nvram get wifidog_trustedmaclist)" != "" ]
+then
+echo "TrustedMACList $(nvram get wifidog_trustedmaclist)"
+fi
+
+
+
+# Parameter: OwnerMACList
+# Default: NONE
+# Optional
+#
+# Set Owner MAC List (separed by comma), no rules, full access to net, no auth 
+# OwnerMAClist 00:00:00:00:00:00,11:11:11:11:11:11
+
+if [ "$(nvram get wifidog_ownermaclist)" != "" ]
+then
+echo "OwnerMAClist $(nvram get wifidog_ownermaclist)"
+fi
+
+
+# Parameter: FirewallRuleSet
+# Default: none
+# Mandatory
+#
+# Groups a number of FirewallRule statements together.
+
+# Parameter: FirewallRule
+# Default: none
+# 
+# Define one firewall rule in a rule set.
+
+# Rule Set: global
+# 
+# Used for rules to be applied to all other rulesets except locked.
+# This is the default config for the Teliphone service.
+# TODO add Here some VOIP Service like freephonie or Neuftalk
+FirewallRuleSet global {
+    FirewallRule allow udp to 69.90.89.192/27
+    FirewallRule allow udp to 69.90.85.0/27
+    # Web access to www.wireless-fr.org and forum/dev
+    FirewallRule allow tcp port 80 to www.wireless-fr.org
+    # Accès au serveur de Rouen 
+    FirewallRule allow to 88.191.45.2
+    #
+    # VOIP Providers
+    #
+    # Phonesystems/Keyyo
+    #
+    FirewallRule allow udp to keyyo.net
+    #
+    # Kiwak
+    #
+    FirewallRule allow udp to kiwak.net
+    #
+    # Freephonie
+    #
+    FirewallRule allow udp to freephonie.net
+    #
+    # Wengo
+    #
+    FirewallRule allow udp to 213.91.9.210
+    #
+    # No auth on our Network
+    #
+    FirewallRule allow to 10.0.0.0/8
+}
+
+# Rule Set: validating-users
+#
+# Used for new users validating their account
+FirewallRuleSet validating-users {
+    FirewallRule allow udp port 67
+    FirewallRule allow tcp port 67
+    FirewallRule allow udp port 53
+    FirewallRule allow tcp port 53
+    FirewallRule allow tcp port 80
+    FirewallRule allow tcp port 110
+    FirewallRule allow tcp port 995
+    FirewallRule allow tcp port 143
+    FirewallRule allow tcp port 993
+    FirewallRule allow tcp port 220
+    FirewallRule allow tcp port 443
+    FirewallRule block to 0.0.0.0/0
+}
+
+# Rule Set: known-users
+#
+# Used for normal validated users.
+FirewallRuleSet known-users {
+    FirewallRule allow udp port 67
+    FirewallRule allow tcp port 67
+    FirewallRule allow udp port 53
+    FirewallRule allow tcp port 53
+    FirewallRule allow tcp port 80
+    FirewallRule allow tcp port 110
+    FirewallRule allow tcp port 995
+    FirewallRule allow tcp port 143
+    FirewallRule allow tcp port 993
+    FirewallRule allow tcp port 220
+    FirewallRule allow tcp port 443
+    # IRC
+    FirewallRule allow tcp port 6667
+    # Skype
+    FirewallRule allow tcp port 1468
+    # SSH
+    FirewallRule allow tcp port 22
+    #
+    FirewallRule allow tcp port 5222
+    FirewallRule allow tcp port 5223
+    # MSN
+    FirewallRule allow tcp port 1863
+    FirewallRule allow udp port 1863
+    # Jabber
+    FirewallRule allow udp port 4000
+    FirewallRule allow tcp port 4000
+    FirewallRule allow tcp port 7000
+    FirewallRule allow icmp to 0.0.0.0/0
+    FirewallRule block to 0.0.0.0/0
+}
+
+# Rule Set: member-users
+#
+# Used for member validated users.
+FirewallRuleSet member-users {
+    FirewallRule allow to 0.0.0.0/0
+}
+
+# Rule Set: unknown-users
+#
+# Used for unvalidated users, this is the ruleset that gets redirected.
+#
+# XXX The redirect code adds the Default DROP clause.
+FirewallRuleSet unknown-users {
+    FirewallRule allow udp port 53
+    FirewallRule allow tcp port 53
+    FirewallRule allow udp port 67
+    FirewallRule allow tcp port 67
+}
+
+# Rule Set: locked-users
+#
+# Used for users that have been locked out.
+FirewallRuleSet locked-users {
+    FirewallRule block to 0.0.0.0/0
+}
+EOF
+}
+
+
+case "$1" in
+  writeconfig)
+    # Compatibility with openwrt
+    ln -sf /var/etc/wifidog.conf /tmp/wifidog.conf
+    rm -f /var/etc/wifidog.conf
+    write_config
+    ;;
+  start)
+    $0 writeconfig
+    echo "Starting Wifidog ... "
+    if $WD_DIR/wdctl status 2> /dev/null
+    then
+	echo "FAILED:  Wifidog already running"
+    else
+        $0 test-module
+	if $WD_DIR/wifidog $OPTIONS
+	then
+		echo "OK"
+	else
+		echo "FAILED:  Wifidog exited with non 0 status"
+	fi
+    fi
+    ;;
+  restart|reload)
+    $0 writeconfig
+    $WD_DIR/wdctl restart
+    ;;
+  stop)
+    echo "Stopping Wifidog ... "
+    if $WD_DIR/wdctl status 2> /dev/null
+    then
+       	if $WD_DIR/wdctl stop
+	then
+		echo "OK"
+	else
+		echo "FAILED:  wdctl stop exited with non 0 status"
+	fi
+       
+    else
+       echo "FAILED:  Wifidog was not running"
+    fi
+    ;;
+  status)
+    $WD_DIR/wdctl status
+    ;;
+  debug|test-module)
+
+    ### Test ipt_mark with iptables
+    test_ipt_mark () {
+      IPTABLES_OK=$($IPT -A FORWARD -m mark --mark 2 -j ACCEPT 2>&1 | grep "No chain.target.match")
+      if [ -z "$IPTABLES_OK" ]; then
+        $IPT -D FORWARD -m mark --mark 2 -j ACCEPT 2>&1
+        echo 1
+      else
+        echo 0
+      fi
+    }
+    ### Test ipt_mac with iptables
+    test_ipt_mac () {
+      IPTABLES_OK=$($IPT -A INPUT -m mac --mac-source 00:00:00:00:00:00 -j ACCEPT 2>&1 | grep "No chain.target.match")
+      if [ -z "$IPTABLES_OK" ]; then
+        $IPT -D INPUT -m mac --mac-source 00:00:00:00:00:00 -j ACCEPT 2>&1
+        echo 1
+      else
+        echo 0
+      fi
+    }
+
+    ### Test ipt_REDIRECT with iptables
+    test_ipt_REDIRECT () {
+      IPTABLES_OK=$($IPT -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 2060 2>&1 | grep "No chain.target.match")
+      if [ -z "$IPTABLES_OK" ]; then
+        $IPT -t nat -D PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 2060 2>&1
+        echo 1
+      else
+        echo 0
+      fi
+    }
+
+    ### Find a module on disk
+    module_exists () {
+    echo " Looking for a module on disk"
+      EXIST=$(find /lib/modules/`uname -r` -name $1.*o 2>/dev/null)
+      if [ -n "$EXIST" ]; then
+        echo 1
+      else
+        echo 0
+      fi
+    }
+
+    ### Test if a module is in memory
+    module_in_memory () {
+      MODULE=$(lsmod | grep $1 | awk '{print $1}')
+      if [ "$MODULE" = "$1" ]; then
+        echo 1
+      else
+        echo 0
+      fi
+    }
+
+    echo "Testing for iptables modules"
+
+    echo "  Testing ipt_mac"
+    TEST_IPT_MAC=$(test_ipt_mac)
+    if [ "$TEST_IPT_MAC" = "0" ]; then
+      echo "   iptables is not working with ipt_mac"
+      echo "   Scanning disk for ipt_mac module"
+      TEST_IPT_MAC_MODULE_EXISTS=$(module_exists "ipt_mac")
+      if [ "$TEST_IPT_MAC_MODULE_EXISTS" = "0" ]; then
+        echo "   ipt_mac module is missing, please install it (kernel or module)"
+        exit
+      else
+        echo "   ipt_mac module exists, trying to load"
+        insmod ipt_mac > /dev/null
+        TEST_IPT_MAC_MODULE_MEMORY=$(module_in_memory "ipt_mac")
+        if [ "$TEST_IPT_MAC_MODULE_MEMORY" = "0" ]; then
+          echo "  Error: ipt_mac not loaded"
+          exit
+        else
+          echo "  ipt_mac loaded sucessfully"
+        fi
+      fi
+    else
+      echo "   ipt_mac  module is working"
+    fi
+
+    echo "  Testing ipt_mark"
+    TEST_IPT_MARK=$(test_ipt_mark)
+    if [ "$TEST_IPT_MARK" = "0" ]; then
+      echo "   iptables is not working with ipt_mark"
+      echo "   Scanning disk for ipt_mark module"
+      TEST_IPT_MARK_MODULE_EXISTS=$(module_exists "ipt_mark")
+      if [ "$TEST_IPT_MARK_MODULE_EXISTS" = "0" ]; then
+        echo "   iptables ipt_mark module missing, please install it (kernel or module)"
+        exit
+      else
+        echo "   ipt_mark module exists, trying to load"
+        insmod ipt_mark
+        TEST_IPT_MARK_MODULE_MEMORY=$(module_in_memory "ipt_mark")
+        if [ "$TEST_IPT_MARK_MODULE_MEMORY" = "0" ]; then
+          echo "   Error: ipt_mark not loaded"
+          exit
+        else
+          echo "   ipt_mark loaded sucessfully"
+        fi
+      fi
+      else
+    echo "   ipt_mark module is working"
+    fi
+
+    echo "  Testing ipt_REDIRECT"
+    TEST_IPT_MAC=$(test_ipt_REDIRECT)
+    if [ "$TEST_IPT_MAC" = "0" ]; then
+      echo "   iptables is not working with ipt_REDIRECT"
+      echo "   Scanning disk for ipt_REDIRECT module"
+      TEST_IPT_MAC_MODULE_EXISTS=$(module_exists "ipt_REDIRECT")
+      if [ "$TEST_IPT_MAC_MODULE_EXISTS" = "0" ]; then
+        echo "   ipt_REDIRECT module is missing, please install it (kernel or module)"
+        exit
+      else
+        echo "   ipt_REDIRECT module exists, trying to load"
+        insmod ipt_REDIRECT > /dev/null
+        TEST_IPT_MAC_MODULE_MEMORY=$(module_in_memory "ipt_REDIRECT")
+        if [ "$TEST_IPT_MAC_MODULE_MEMORY" = "0" ]; then
+          echo "  Error: ipt_REDIRECT not loaded"
+          exit
+        else
+          echo "  ipt_REDIRECT loaded sucessfully"
+        fi
+      fi
+    else
+      echo "   ipt_REDIRECT  module is working"
+    fi
+
+    ;;
+
+  *)
+   echo "Usage: $0 {start|stop|restart|reload|status|writeconfig|test-module}"
+   exit 1
+   ;;
+esac
+
+
